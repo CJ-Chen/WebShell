@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -10,11 +12,50 @@ from app.database import SessionLocal
 from app.errors import AppError
 from app.models import DestinationRule
 from app.routers.files import normalize_remote_path
-from app.routers.terminals import ensure_tmux_session, terminal_dimension
+from app.routers.terminals import (
+    _receive_terminal_input,
+    ensure_tmux_session,
+    terminal_dimension,
+)
 from app.security import hash_password, verify_password
 from app.schemas import ChangePasswordRequest
 from app.services.destination import resolve_destination
 from app.services.encryption import cipher
+
+
+class TerminalMessagesDone(Exception):
+    pass
+
+
+class FakeTerminalWebSocket:
+    def __init__(self, messages: list[dict[str, object]]) -> None:
+        self.messages = iter(messages)
+
+    async def receive_text(self) -> str:
+        try:
+            return json.dumps(next(self.messages))
+        except StopIteration as exc:
+            raise TerminalMessagesDone from exc
+
+
+class FakeTerminalConnection:
+    def __init__(self, pane_modes: list[str]) -> None:
+        self.commands: list[str] = []
+        self.pane_modes = iter(pane_modes)
+
+    async def run(self, command: str, check: bool = False) -> SimpleNamespace:
+        self.commands.append(command)
+        stdout = next(self.pane_modes, "1\n") if "display-message" in command else ""
+        return SimpleNamespace(stdout=stdout)
+
+
+class FakeTerminalProcess:
+    def __init__(self) -> None:
+        self.stdin = self
+        self.data = bytearray()
+
+    def write(self, data: bytes) -> None:
+        self.data.extend(data)
 
 
 def test_password_hash_round_trip() -> None:
@@ -67,6 +108,50 @@ def test_existing_tmux_session_leaves_mouse_for_browser_selection() -> None:
         connection = Connection()
         await ensure_tmux_session(connection, "ws_test")
         assert any("set-option -g mouse off" in command for command in connection.commands)
+
+    asyncio.run(run())
+
+
+def test_terminal_history_scroll_exits_copy_mode_at_bottom() -> None:
+    async def run() -> None:
+        connection = FakeTerminalConnection(["1\n", "0\n"])
+        process = FakeTerminalProcess()
+        websocket = FakeTerminalWebSocket(
+            [
+                {"type": "history-scroll", "direction": "up", "lines": 4},
+                {"type": "history-scroll", "direction": "down", "lines": 12},
+                {"type": "history-scroll", "direction": "down", "lines": 3},
+                {"type": "input", "data": "echo ready\n"},
+            ]
+        )
+        with pytest.raises(TerminalMessagesDone):
+            await _receive_terminal_input(websocket, process, connection, "ws_test")
+        assert connection.commands == [
+            "tmux copy-mode -t ws_test",
+            "tmux send-keys -X -t ws_test -N 4 scroll-up; "
+            "tmux display-message -p -t ws_test '#{pane_in_mode}'",
+            "tmux send-keys -X -t ws_test -N 12 scroll-down-and-cancel; "
+            "tmux display-message -p -t ws_test '#{pane_in_mode}'",
+        ]
+        assert process.stdin.data == b"echo ready\n"
+
+    asyncio.run(run())
+
+
+def test_terminal_input_cancels_active_history_mode() -> None:
+    async def run() -> None:
+        connection = FakeTerminalConnection(["1\n"])
+        process = FakeTerminalProcess()
+        websocket = FakeTerminalWebSocket(
+            [
+                {"type": "history-scroll", "direction": "up", "lines": 2},
+                {"type": "input", "data": "a"},
+            ]
+        )
+        with pytest.raises(TerminalMessagesDone):
+            await _receive_terminal_input(websocket, process, connection, "ws_test")
+        assert connection.commands[-1] == "tmux send-keys -X -t ws_test cancel"
+        assert process.stdin.data == b"a"
 
     asyncio.run(run())
 

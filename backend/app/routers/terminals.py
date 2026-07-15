@@ -227,10 +227,14 @@ async def _receive_terminal_input(
                     f"tmux copy-mode -t {tmux_session}", check=False
                 )
                 history_active = True
-            await connection.run(
-                f"tmux send-keys -X -t {tmux_session} -N {lines} scroll-{direction}",
+            action = "scroll-up" if direction == "up" else "scroll-down-and-cancel"
+            result = await connection.run(
+                f"tmux send-keys -X -t {tmux_session} -N {lines} {action}; "
+                f"tmux display-message -p -t {tmux_session} '#{{pane_in_mode}}'",
                 check=False,
             )
+            if direction == "down":
+                history_active = result.stdout.strip().endswith("1")
 
 
 async def _send_terminal_output(websocket: WebSocket, process) -> None:

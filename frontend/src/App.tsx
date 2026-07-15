@@ -676,15 +676,35 @@ function TerminalPane({ terminal }: { terminal: TerminalSession | null }) {
         }
       })
     }
+    let wheelDelta = 0
+    let wheelTimer: number | undefined
+    const flushHistoryScroll = () => {
+      if (!wheelDelta || socket.readyState !== WebSocket.OPEN) {
+        wheelDelta = 0
+        wheelTimer = undefined
+        return
+      }
+      const delta = wheelDelta
+      wheelDelta = 0
+      wheelTimer = undefined
+      const magnitude = Math.max(1, Math.min(Math.round(Math.abs(delta) / 40), 12))
+      socket.send(JSON.stringify({
+        type: 'history-scroll',
+        direction: delta < 0 ? 'up' : 'down',
+        lines: magnitude,
+      }))
+    }
     const scrollHistory = (event: WheelEvent) => {
       if (terminal.persistence_mode !== 'tmux' || socket.readyState !== WebSocket.OPEN) return
       event.preventDefault()
-      const magnitude = Math.max(1, Math.min(Math.ceil(Math.abs(event.deltaY) / 24), 20))
-      socket.send(JSON.stringify({
-        type: 'history-scroll',
-        direction: event.deltaY < 0 ? 'up' : 'down',
-        lines: magnitude,
-      }))
+      if (wheelDelta && Math.sign(wheelDelta) !== Math.sign(event.deltaY)) {
+        if (wheelTimer !== undefined) window.clearTimeout(wheelTimer)
+        flushHistoryScroll()
+      }
+      wheelDelta += event.deltaY
+      if (wheelTimer === undefined) {
+        wheelTimer = window.setTimeout(flushHistoryScroll, 45)
+      }
     }
     terminalElement.addEventListener('mouseup', copySelection)
     terminalElement.addEventListener('contextmenu', pasteOnRightClick, true)
@@ -694,6 +714,7 @@ function TerminalPane({ terminal }: { terminal: TerminalSession | null }) {
       terminalElement.removeEventListener('mouseup', copySelection)
       terminalElement.removeEventListener('contextmenu', pasteOnRightClick, true)
       terminalElement.removeEventListener('wheel', scrollHistory, true)
+      if (wheelTimer !== undefined) window.clearTimeout(wheelTimer)
       input.dispose()
       socket.close()
       xterm.dispose()
