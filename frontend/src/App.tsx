@@ -695,7 +695,7 @@ function TerminalPane({ terminal }: { terminal: TerminalSession | null }) {
       }))
     }
     const scrollHistory = (event: WheelEvent) => {
-      if (terminal.persistence_mode !== 'tmux' || socket.readyState !== WebSocket.OPEN) return
+      if (terminal.persistence_mode !== 'tmux' || socket.readyState !== WebSocket.OPEN) return true
       event.preventDefault()
       if (wheelDelta && Math.sign(wheelDelta) !== Math.sign(event.deltaY)) {
         if (wheelTimer !== undefined) window.clearTimeout(wheelTimer)
@@ -705,15 +705,15 @@ function TerminalPane({ terminal }: { terminal: TerminalSession | null }) {
       if (wheelTimer === undefined) {
         wheelTimer = window.setTimeout(flushHistoryScroll, 45)
       }
+      return false
     }
+    xterm.attachCustomWheelEventHandler(scrollHistory)
     terminalElement.addEventListener('mouseup', copySelection)
     terminalElement.addEventListener('contextmenu', pasteOnRightClick, true)
-    terminalElement.addEventListener('wheel', scrollHistory, { passive: false, capture: true })
     return () => {
       observer.disconnect()
       terminalElement.removeEventListener('mouseup', copySelection)
       terminalElement.removeEventListener('contextmenu', pasteOnRightClick, true)
-      terminalElement.removeEventListener('wheel', scrollHistory, true)
       if (wheelTimer !== undefined) window.clearTimeout(wheelTimer)
       input.dispose()
       socket.close()
