@@ -127,7 +127,7 @@ def test_terminal_history_scroll_exits_copy_mode_at_bottom() -> None:
         with pytest.raises(TerminalMessagesDone):
             await _receive_terminal_input(websocket, process, connection, "ws_test")
         assert connection.commands == [
-            "tmux copy-mode -t ws_test",
+            "tmux copy-mode -t ws_test; "
             "tmux send-keys -X -t ws_test -N 4 scroll-up; "
             "tmux display-message -p -t ws_test '#{pane_in_mode}'",
             "tmux send-keys -X -t ws_test -N 12 scroll-down-and-cancel; "

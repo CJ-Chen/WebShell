@@ -678,15 +678,8 @@ function TerminalPane({ terminal }: { terminal: TerminalSession | null }) {
     }
     let wheelDelta = 0
     let wheelTimer: number | undefined
-    const flushHistoryScroll = () => {
-      if (!wheelDelta || socket.readyState !== WebSocket.OPEN) {
-        wheelDelta = 0
-        wheelTimer = undefined
-        return
-      }
-      const delta = wheelDelta
-      wheelDelta = 0
-      wheelTimer = undefined
+    const sendHistoryScroll = (delta: number) => {
+      if (!delta || socket.readyState !== WebSocket.OPEN) return
       const magnitude = Math.max(1, Math.min(Math.round(Math.abs(delta) / 40), 12))
       socket.send(JSON.stringify({
         type: 'history-scroll',
@@ -694,16 +687,28 @@ function TerminalPane({ terminal }: { terminal: TerminalSession | null }) {
         lines: magnitude,
       }))
     }
+    const flushHistoryScroll = () => {
+      const delta = wheelDelta
+      wheelDelta = 0
+      sendHistoryScroll(delta)
+      wheelTimer = delta ? window.setTimeout(flushHistoryScroll, 32) : undefined
+    }
     const scrollHistory = (event: WheelEvent) => {
       if (terminal.persistence_mode !== 'tmux' || socket.readyState !== WebSocket.OPEN) return true
       event.preventDefault()
       if (wheelDelta && Math.sign(wheelDelta) !== Math.sign(event.deltaY)) {
         if (wheelTimer !== undefined) window.clearTimeout(wheelTimer)
-        flushHistoryScroll()
+        const delta = wheelDelta
+        wheelDelta = 0
+        wheelTimer = undefined
+        sendHistoryScroll(delta)
       }
       wheelDelta += event.deltaY
       if (wheelTimer === undefined) {
-        wheelTimer = window.setTimeout(flushHistoryScroll, 45)
+        const delta = wheelDelta
+        wheelDelta = 0
+        sendHistoryScroll(delta)
+        wheelTimer = window.setTimeout(flushHistoryScroll, 32)
       }
       return false
     }
