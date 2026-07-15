@@ -28,6 +28,7 @@ Remote Linux server
 - 用户维护多台 SSH 目标机，支持用户名密码和私钥认证。
 - 首次连接展示并确认 SSH 主机指纹，指纹变化时阻止连接。
 - xterm.js 浏览器终端、WebSocket 双向传输和实时 resize。
+- 桌面工作区的全局导航、终端列表和文件管理可独立折叠，中心终端始终保留并自动扩展。
 - 远端 tmux 会话保持；缺少 tmux 时降级为普通 SSH PTY。
 - tmux 和 xterm 默认保留 50000 行历史，tmux mouse/copy-mode 支持滚轮浏览。
 - SFTP 文件浏览、上传、下载、目录创建、移动、重命名、删除和预览。

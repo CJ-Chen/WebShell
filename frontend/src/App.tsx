@@ -40,6 +40,10 @@ import {
   Menu as MenuIcon,
   MoreHorizontal,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Pencil,
   Plus,
   RefreshCw,
@@ -645,7 +649,7 @@ function formatBytes(value: number) {
   return `${amount.toFixed(amount >= 10 ? 1 : 2)} ${units[unit]}`
 }
 
-function FileManager({ target }: { target: Target | null }) {
+function FileManager({ target, onCollapse }: { target: Target | null; onCollapse?: () => void }) {
   const { message, modal } = AntApp.useApp()
   const [listing, setListing] = useState<FileList | null>(null)
   const [loading, setLoading] = useState(false)
@@ -782,6 +786,7 @@ function FileManager({ target }: { target: Target | null }) {
         <div className="path-display" title={listing?.path}>{listing?.path || '连接中'}</div>
         <Tooltip title="新建目录"><Button type="text" icon={<FolderOpen size={16} />} disabled={!listing} onClick={createDirectory} /></Tooltip>
         <Upload {...uploadProps}><Tooltip title="上传"><Button type="text" icon={<UploadCloud size={16} />} disabled={!listing} /></Tooltip></Upload>
+        {onCollapse && <Tooltip title="收起文件管理"><Button type="text" icon={<PanelRightClose size={16} />} onClick={onCollapse} /></Tooltip>}
       </div>
       <Table rowKey="path" size="small" columns={columns} dataSource={listing?.items || []} loading={loading} pagination={false} scroll={{ y: 'calc(100vh - 190px)' }} />
       <Modal title={preview?.name} open={Boolean(preview)} footer={null} width={760} onCancel={() => setPreview(null)}>
@@ -802,6 +807,8 @@ function WorkspacePage() {
   const [selectedTerminalId, setSelectedTerminalId] = useState<string>('')
   const [createOpen, setCreateOpen] = useState(false)
   const [mobileLayout, setMobileLayout] = useState(() => window.matchMedia('(max-width: 760px)').matches)
+  const [terminalListCollapsed, setTerminalListCollapsed] = useState(() => localStorage.getItem('webshell:terminal-list-collapsed') === '1')
+  const [fileManagerCollapsed, setFileManagerCollapsed] = useState(() => localStorage.getItem('webshell:file-manager-collapsed') === '1')
   const [form] = Form.useForm()
 
   const loadTerminals = useCallback(async () => {
@@ -842,6 +849,22 @@ function WorkspacePage() {
     } catch (error) { message.error(errorMessage(error)) }
   }
 
+  const toggleTerminalList = () => {
+    setTerminalListCollapsed((current) => {
+      const next = !current
+      localStorage.setItem('webshell:terminal-list-collapsed', next ? '1' : '0')
+      return next
+    })
+  }
+
+  const toggleFileManager = () => {
+    setFileManagerCollapsed((current) => {
+      const next = !current
+      localStorage.setItem('webshell:file-manager-collapsed', next ? '1' : '0')
+      return next
+    })
+  }
+
   const terminalList = (
     <aside className="terminal-list">
       <div className="target-select-wrap">
@@ -853,7 +876,13 @@ function WorkspacePage() {
           suffixIcon={<Server size={15} />}
         />
       </div>
-      <div className="panel-heading"><span>终端</span><Tooltip title="新建终端"><Button type="text" size="small" icon={<Plus size={16} />} disabled={!selectedTarget} onClick={() => setCreateOpen(true)} /></Tooltip></div>
+      <div className="panel-heading">
+        <span>终端</span>
+        <div className="panel-heading-actions">
+          <Tooltip title="新建终端"><Button type="text" size="small" icon={<Plus size={16} />} disabled={!selectedTarget} onClick={() => setCreateOpen(true)} /></Tooltip>
+          {!mobileLayout && <Tooltip title="收起终端列表"><Button type="text" size="small" icon={<PanelLeftClose size={16} />} onClick={toggleTerminalList} /></Tooltip>}
+        </div>
+      </div>
       <div className="terminal-items">
         {targetTerminals.map((terminal) => (
           <button key={terminal.id} className={`terminal-item ${selectedTerminalId === terminal.id ? 'active' : ''}`} onClick={() => setSelectedTerminalId(terminal.id)}>
@@ -883,10 +912,25 @@ function WorkspacePage() {
           ]} />
         </div>
       ) : (
-        <div className="workspace-desktop">
-          {terminalList}
+        <div
+          className="workspace-desktop"
+          style={{
+            gridTemplateColumns: `${terminalListCollapsed ? '42px' : 'clamp(170px, 14vw, 210px)'} minmax(320px, 1fr) ${fileManagerCollapsed ? '42px' : 'minmax(260px, 36%)'}`,
+          }}
+        >
+          {terminalListCollapsed ? (
+            <aside className="workspace-panel-rail terminal-panel-rail">
+              <Tooltip title="展开终端列表" placement="right"><Button type="text" icon={<PanelLeftOpen size={17} />} onClick={toggleTerminalList} /></Tooltip>
+              <span>终端</span>
+            </aside>
+          ) : terminalList}
           <TerminalPane terminal={selectedTerminal} />
-          <FileManager target={selectedTarget} />
+          {fileManagerCollapsed ? (
+            <aside className="workspace-panel-rail file-panel-rail">
+              <Tooltip title="展开文件管理" placement="left"><Button type="text" icon={<PanelRightOpen size={17} />} onClick={toggleFileManager} /></Tooltip>
+              <span>文件</span>
+            </aside>
+          ) : <FileManager target={selectedTarget} onCollapse={toggleFileManager} />}
         </div>
       )}
       <Modal title="新建终端" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => void createTerminal()} okText="创建">
