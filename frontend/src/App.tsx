@@ -80,6 +80,41 @@ import type {
 
 const { Header, Sider, Content } = Layout
 const { Text, Title } = Typography
+let webShellClipboard = ''
+
+async function copyTerminalText(value: string) {
+  if (!value) return
+  webShellClipboard = value
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value)
+      return
+    } catch {
+      // Fall back to the selection-based copy path below.
+    }
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  textarea.remove()
+}
+
+async function readTerminalClipboard() {
+  if (window.isSecureContext && navigator.clipboard?.readText) {
+    try {
+      const value = await navigator.clipboard.readText()
+      if (value) return value
+    } catch {
+      // HTTP LAN access and denied browser permissions use the in-app clipboard.
+    }
+  }
+  return webShellClipboard
+}
 
 interface AuthContextValue {
   user: User | null
@@ -559,6 +594,7 @@ function TargetsPage() {
 }
 
 function TerminalPane({ terminal }: { terminal: TerminalSession | null }) {
+  const { message } = AntApp.useApp()
   const containerRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState('disconnected')
 
@@ -619,13 +655,50 @@ function TerminalPane({ terminal }: { terminal: TerminalSession | null }) {
     })
     const observer = new ResizeObserver(() => sendSize())
     observer.observe(containerRef.current)
+    const terminalElement = containerRef.current
+    const copySelection = () => {
+      requestAnimationFrame(() => {
+        const selection = xterm.getSelection()
+        if (selection) {
+          void copyTerminalText(selection).finally(() => xterm.focus())
+        }
+      })
+    }
+    const pasteOnRightClick = (event: MouseEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      void readTerminalClipboard().then((value) => {
+        if (value) {
+          xterm.paste(value)
+          xterm.focus()
+        } else {
+          message.warning('剪贴板为空；局域网 HTTP 下外部内容请使用 Ctrl+V')
+        }
+      })
+    }
+    const scrollHistory = (event: WheelEvent) => {
+      if (terminal.persistence_mode !== 'tmux' || socket.readyState !== WebSocket.OPEN) return
+      event.preventDefault()
+      const magnitude = Math.max(1, Math.min(Math.ceil(Math.abs(event.deltaY) / 24), 20))
+      socket.send(JSON.stringify({
+        type: 'history-scroll',
+        direction: event.deltaY < 0 ? 'up' : 'down',
+        lines: magnitude,
+      }))
+    }
+    terminalElement.addEventListener('mouseup', copySelection)
+    terminalElement.addEventListener('contextmenu', pasteOnRightClick, true)
+    terminalElement.addEventListener('wheel', scrollHistory, { passive: false, capture: true })
     return () => {
       observer.disconnect()
+      terminalElement.removeEventListener('mouseup', copySelection)
+      terminalElement.removeEventListener('contextmenu', pasteOnRightClick, true)
+      terminalElement.removeEventListener('wheel', scrollHistory, true)
       input.dispose()
       socket.close()
       xterm.dispose()
     }
-  }, [terminal])
+  }, [message, terminal])
 
   if (!terminal) return <div className="workspace-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择或创建终端" /></div>
   return (

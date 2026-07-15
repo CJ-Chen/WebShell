@@ -78,8 +78,9 @@ xterm.js <-> WebSocket <-> FastAPI <-> AsyncSSH PTY <-> tmux/shell
 - 容器尺寸变化时，前端发送 resize 消息，后端调用 SSH PTY resize。
 - 远端存在 tmux 时，平台创建随机内部会话名并 attach。
 - 断开浏览器只会关闭 SSH attach，tmux 内任务继续运行。
-- 新建 tmux pane 前设置 `history-limit=50000`，每次连接设置 `mouse on`。
-- 滚轮进入 tmux copy-mode；按 `q` 或 `Esc` 返回实时输出。
+- 新建 tmux pane 前设置 `history-limit=50000`，并关闭 tmux mouse 以保留浏览器原生文本选择。
+- 左键拖选后自动写入系统剪贴板或 WebShell 内部剪贴板，右键单击直接粘贴。
+- 滚轮事件通过 WebSocket 驱动 tmux copy-mode；按 `q` 或 `Esc` 返回实时输出。
 - 桌面和移动布局只渲染一个 Terminal 组件，避免重复 WebSocket。
 
 ### 3.4 文件管理

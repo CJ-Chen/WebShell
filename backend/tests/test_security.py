@@ -51,7 +51,7 @@ def test_terminal_dimensions_are_clamped() -> None:
     assert terminal_dimension("900", 80, 20, 500) == 500
 
 
-def test_existing_tmux_session_enables_mouse_scrolling() -> None:
+def test_existing_tmux_session_leaves_mouse_for_browser_selection() -> None:
     class Result:
         exit_status = 0
 
@@ -66,7 +66,7 @@ def test_existing_tmux_session_enables_mouse_scrolling() -> None:
     async def run() -> None:
         connection = Connection()
         await ensure_tmux_session(connection, "ws_test")
-        assert any("set-option -g mouse on" in command for command in connection.commands)
+        assert any("set-option -g mouse off" in command for command in connection.commands)
 
     asyncio.run(run())
 

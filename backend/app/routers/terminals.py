@@ -8,7 +8,7 @@ from typing import List
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
@@ -53,14 +53,14 @@ async def ensure_tmux_session(connection, session_name: str) -> None:
     if existing.exit_status == 0:
         await connection.run(
             f"tmux set-option -g history-limit {history_limit} "
-            "\\; set-option -g mouse on",
+            "\\; set-option -g mouse off",
             check=False,
         )
         return
     created = await connection.run(
         "tmux start-server "
         f"\\; set-option -g history-limit {history_limit} "
-        "\\; set-option -g mouse on "
+        "\\; set-option -g mouse off "
         f"\\; new-session -d -s {session_name}",
         check=False,
     )
@@ -187,7 +187,13 @@ def _websocket_origin_allowed(websocket: WebSocket) -> bool:
         return False
 
 
-async def _receive_terminal_input(websocket: WebSocket, process) -> None:
+async def _receive_terminal_input(
+    websocket: WebSocket,
+    process,
+    connection,
+    tmux_session: str | None,
+) -> None:
+    history_active = False
     while True:
         message = await websocket.receive_text()
         try:
@@ -196,11 +202,35 @@ async def _receive_terminal_input(websocket: WebSocket, process) -> None:
             continue
         message_type = payload.get("type")
         if message_type == "input":
-            process.stdin.write(str(payload.get("data", "")).encode("utf-8"))
+            data = str(payload.get("data", ""))
+            if history_active and tmux_session:
+                await connection.run(
+                    f"tmux send-keys -X -t {tmux_session} cancel", check=False
+                )
+                history_active = False
+                if data in {"q", "\x1b"}:
+                    continue
+            process.stdin.write(data.encode("utf-8"))
         elif message_type == "resize":
             cols = max(20, min(int(payload.get("cols", 80)), 500))
             rows = max(5, min(int(payload.get("rows", 24)), 200))
             process.change_terminal_size(cols, rows)
+        elif message_type == "history-scroll" and tmux_session:
+            direction = payload.get("direction")
+            if direction not in {"up", "down"}:
+                continue
+            lines = max(1, min(int(payload.get("lines", 3)), 20))
+            if not history_active:
+                if direction == "down":
+                    continue
+                await connection.run(
+                    f"tmux copy-mode -t {tmux_session}", check=False
+                )
+                history_active = True
+            await connection.run(
+                f"tmux send-keys -X -t {tmux_session} -N {lines} scroll-{direction}",
+                check=False,
+            )
 
 
 async def _send_terminal_output(websocket: WebSocket, process) -> None:
@@ -228,7 +258,10 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str) -> None:
         except AppError as exc:
             await websocket.close(code=4401 if exc.status_code == 401 else 4403, reason=exc.message)
             return
-        if not await terminal_hub.register(terminal.id, context.user.id, websocket):
+        terminal_pk = terminal.id
+        terminal_mode = terminal.persistence_mode
+        remote_session_name = terminal.remote_session_name
+        if not await terminal_hub.register(terminal_pk, context.user.id, websocket):
             await websocket.close(code=4429, reason="终端已在其他窗口连接")
             return
         await websocket.accept()
@@ -236,13 +269,13 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str) -> None:
         process = None
         try:
             await websocket.send_json(
-                {"type": "status", "status": "connecting", "mode": terminal.persistence_mode}
+                {"type": "status", "status": "connecting", "mode": terminal_mode}
             )
             connection, _identity, _destination = await ssh_manager.connect(db, target)
             command = None
-            if terminal.persistence_mode == "tmux":
-                await ensure_tmux_session(connection, terminal.remote_session_name)
-                command = f"tmux attach-session -t {terminal.remote_session_name}"
+            if terminal_mode == "tmux":
+                await ensure_tmux_session(connection, remote_session_name)
+                command = f"tmux attach-session -t {remote_session_name}"
             process = await connection.create_process(
                 command,
                 term_type="xterm-256color",
@@ -253,9 +286,16 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str) -> None:
             terminal.last_connected_at = utcnow()
             await db.commit()
             await websocket.send_json(
-                {"type": "status", "status": "connected", "mode": terminal.persistence_mode}
+                {"type": "status", "status": "connected", "mode": terminal_mode}
             )
-            input_task = asyncio.create_task(_receive_terminal_input(websocket, process))
+            input_task = asyncio.create_task(
+                _receive_terminal_input(
+                    websocket,
+                    process,
+                    connection,
+                    remote_session_name if terminal_mode == "tmux" else None,
+                )
+            )
             output_task = asyncio.create_task(_send_terminal_output(websocket, process))
             done, pending = await asyncio.wait(
                 {input_task, output_task}, return_when=asyncio.FIRST_COMPLETED
@@ -282,8 +322,12 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str) -> None:
             except RuntimeError:
                 pass
         finally:
-            terminal.status = "ready"
             try:
+                await db.execute(
+                    update(TerminalSession)
+                    .where(TerminalSession.id == terminal_pk)
+                    .values(status="ready")
+                )
                 await db.commit()
             except Exception:
                 await db.rollback()
@@ -292,7 +336,7 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str) -> None:
             if connection:
                 connection.close()
                 await connection.wait_closed()
-            await terminal_hub.unregister(terminal.id, websocket)
+            await terminal_hub.unregister(terminal_pk, websocket)
             try:
                 await websocket.close()
             except RuntimeError:

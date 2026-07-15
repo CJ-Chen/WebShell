@@ -53,7 +53,7 @@ pixi run set-password --username admin --password '<new-password>'
 - 用户提供自己在目标机上的 Linux 用户名与密码，默认使用 SSH 密码认证；也可切换为私钥认证。
 - 安装 `tmux` 时终端可在网页断开后继续运行；未安装时自动降级为普通 PTY。
 - 新建 tmux pane 和浏览器终端默认保留 50000 行历史，可通过 `WEBSHELL_TMUX_HISTORY_LIMIT` 调整远端 tmux 上限。
-- WebShell 会为 tmux 启用 mouse 模式；在终端中使用滚轮会进入 tmux copy-mode 并浏览历史，按 `q` 或 `Esc` 返回实时输出。
+- 终端支持左键拖选后自动复制、右键单击粘贴；滚轮通过 WebSocket 驱动 tmux copy-mode 浏览历史，按 `q` 或 `Esc` 返回实时输出。
 
 ## 生产部署
 
