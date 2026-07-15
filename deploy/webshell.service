@@ -1,0 +1,25 @@
+[Unit]
+Description=WebShell SSH relay API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=webshell
+Group=webshell
+WorkingDirectory=/opt/webshell
+EnvironmentFile=/etc/webshell/webshell.env
+ExecStart=/usr/local/bin/pixi run --frozen backend-prod
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/webshell
+ReadOnlyPaths=/etc/webshell /opt/webshell
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
